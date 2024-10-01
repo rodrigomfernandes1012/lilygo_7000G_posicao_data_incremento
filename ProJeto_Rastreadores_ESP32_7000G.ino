@@ -10,8 +10,6 @@
 #include <Arduino.h>
 #include <Preferences.h> // Biblioteca para armazenamento em Flash
 
-
-
 const char apn[]  = "claro.com.br"; 
 const char gprsUser[] = "claro";
 const char gprsPass[] = "claro";
@@ -40,6 +38,8 @@ int vref = 1100;
 // Variáveis de GPS
 float lat, lon;
 int nrSeq = 0;  // Inicializamos nrSeq a zero
+int deepSleepCount = 0; // Contador de ciclos de sono profundo
+
 
 Preferences preferences; // Objeto para gerenciar as preferências
 
@@ -86,7 +86,9 @@ void setup() {
   SerialMon.begin(115200);
   delay(10);
 
-  print_wakeup_reason();
+  String wakeupReason = getWakeupReason();
+
+  Serial.println("Motivo do despertar: " + wakeupReason);
 
   // Iniciar preferences
   preferences.begin("storage", false);
@@ -150,7 +152,7 @@ void setup() {
   for (int i = 0; i < 2; i++) {
     obterCoordenadasGPSlatlon();
     if (lat != 0.0 && lon != 0.0) {
-      enviarParaAPI(lat, lon, nrSeq);
+      enviarParaAPI(lat, lon, nrSeq, wakeupReason);
       nrSeq++;
     } else {
       SerialMon.println("Failed to get valid GPS coordinates");
@@ -172,27 +174,34 @@ void setup() {
 }
 
 void loop() {
-  enterDeepSleep();
+ // enterDeepSleep();
+ if (deepSleepCount < 5) {
+    deepSleepCount++;
+    enterDeepSleep();
+  } else {
+    nrSeq = 0; // Zerar nrSeq antes de enviar os dados
+    // Aqui você poderia fazer outra ação, se necessário, antes de entrar em sono profundo novamente.
+    preferences.putInt("nrSeq", nrSeq);
+  
+    // Envio de dados ou outras ações que você deseja executar após 5 ciclos de sono profundo.
+    // Por exemplo você pode reconfigurar o dispositivo ou fazer um reset etc.
+    enterDeepSleep();
+  }
 }
 
-void print_wakeup_reason() {
-  esp_sleep_wakeup_cause_t wakeup_reason;
-  String reason = "";
-
-  wakeup_reason = esp_sleep_get_wakeup_cause();
+String getWakeupReason() {
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
 
   switch(wakeup_reason) {
-    case 1 :reason = "EXT0 RTC_IO BTN"; break;
-    case 2 :reason = "EXT1 RTC_CNTL";   break;
-    case 3 :reason = "TIMER";           break;
-    case 4 :reason = "TOUCHPAD";        break;
-    case 5 :reason = "ULP PROGRAM";     break;
-    default :reason = "NO DS CAUSE";    break;
+    case ESP_SLEEP_WAKEUP_EXT0: return "EXT0 RTC_IO BTN";
+    case ESP_SLEEP_WAKEUP_EXT1: return "EXT1 RTC_CNTL";
+    case ESP_SLEEP_WAKEUP_TIMER: return "TIMER";
+    case ESP_SLEEP_WAKEUP_TOUCHPAD: return "TOUCHPAD";
+    case ESP_SLEEP_WAKEUP_ULP: return "ULP PROGRAM";
+    default: return "NO DS CAUSE";
   }
-  
-  Serial.println(reason);
 }
-delay(5000);
+
 void obterCoordenadasGPSlatlon() {
   float obtainedLat, obtainedLon;
   for (int attempts = 0; attempts < 10; attempts++) {
@@ -209,10 +218,10 @@ void obterCoordenadasGPSlatlon() {
   lon = 0.0;
 }
 
-void enviarParaAPI(float latitude, float longitude, int sequence) {
+void enviarParaAPI(float latitude, float longitude, int sequence, const String& reason) {
   StaticJsonDocument<300> jsonDoc;
   jsonDoc["cdDispositivo"] = 1;
-  jsonDoc["dsArquivo"] = "109789367";
+  jsonDoc["dsArquivo"] = reason;  // Enviar o motivo do wakeup
   jsonDoc["dsLat"] = String(latitude, 6);
   jsonDoc["dsLong"] = String(longitude, 6);
   jsonDoc["dsModelo"] = "ESP32 SIM7000G";
@@ -267,10 +276,12 @@ void enterDeepSleep() {
   digitalWrite(PIN_TX, LOW);
   digitalWrite(PIN_RX, LOW);
   digitalWrite(PWR_PIN, LOW);
-  digitalWrite(12, LOW); // Desligar alimentação do modem para economizar energia
+  digitalWrite(LED_PIN, LOW); // Desligar alimentação do modem para economizar energia
   delay(5000);
-  // Configurar para 4 horas de sono profundo (4 horas * 60 minutos * 60 segundos * 1.000.000 microssegundos)
-  esp_sleep_enable_timer_wakeup(5 * 600 * 600 * 10000); // Configurar para 6 horas de sono profundo
-
+  
+  // Configurar para 6 horas de sono profundo (6 horas * 60 minutos * 60 segundos * 1.000.000 microssegundos)
+//  esp_sleep_enable_timer_wakeup(6ULL * 60ULL * 60ULL * 1000000ULL); // 6 HORAS
+  esp_sleep_enable_timer_wakeup(60ULL * 60ULL * 1000000ULL); // 60 minutos
+  //esp_sleep_enable_timer_wakeup(60ULL * 1000000ULL);  // 60 segundos
   esp_deep_sleep_start();
 }
